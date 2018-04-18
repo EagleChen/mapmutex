@@ -10,6 +10,70 @@ import (
 
 const MaxRetry = 100000
 
+func TestLockSuccess(t *testing.T) {
+	m := NewMapMutex()
+
+	if !m.TryLock("123") {
+		t.Error("fail to get lock")
+	}
+	m.Unlock("123")
+}
+
+func TestLockFail(t *testing.T) {
+	// fail fast
+	m := NewCustomizedMapMutex(1, 1, 1, 2, 0.1)
+
+	c := make(chan bool)
+	finish := make(chan bool)
+
+	num := 5
+	success := make([]int, num)
+
+	for i := 0; i < num; i++ {
+		go func(i int) {
+			if m.TryLock("123") {
+				<-c // block here
+				success[i] = 1
+				m.Unlock("123")
+			}
+			finish <- true
+		}(i)
+	}
+
+	// most goroutines fail to get the lock
+	for i := 0; i < num-1; i++ {
+		<-finish
+	}
+
+	sum := 0
+	for _, s := range success {
+		sum += s
+	}
+
+	if sum != 0 {
+		t.Error("some other goroutine got the lock")
+	}
+
+	// finish the success one
+	c <- true
+	// wait
+	<-finish
+	for _, s := range success {
+		sum += s
+	}
+	if sum != 1 {
+		t.Error("no goroutine got the lock")
+	}
+}
+
+func TestLockIndivisually(t *testing.T) {
+	m := NewMapMutex()
+
+	if !m.TryLock(123) || !m.TryLock(456) {
+		t.Error("different locks affect each other")
+	}
+}
+
 func BenchmarkMutex1000_100_20_20(b *testing.B)        { lockByOneMutex(1000, 100, 20, 20) }
 func BenchmarkMapWithMutex1000_100_20_20(b *testing.B) { lockByMapWithMutex(1000, 100, 20, 20) }
 func BenchmarkMapMutex1000_100_20_20(b *testing.B)     { lockByMapMutex(1000, 100, 20, 20) }
