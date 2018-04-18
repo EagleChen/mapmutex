@@ -9,7 +9,8 @@ import (
 // Mutex is the mutex with synchronized map
 // it's for reducing unnecessary locks among different keys
 type Mutex struct {
-	locks     sync.Map
+	locks     map[interface{}]interface{}
+	m         *sync.Mutex
 	maxRetry  int
 	maxDelay  float64 // in nanosend
 	baseDelay float64 // in nanosecond
@@ -20,10 +21,13 @@ type Mutex struct {
 // TryLock tries to aquire the lock.
 func (m *Mutex) TryLock(key interface{}) (gotLock bool) {
 	for i := 0; i < m.maxRetry; i++ {
-		if _, ok := m.locks.Load(key); ok { // if locked
+		m.m.Lock()
+		if _, ok := m.locks[key]; ok { // if locked
+			m.m.Unlock()
 			time.Sleep(m.backoff(i))
 		} else { // if unlock, lockit
-			m.locks.Store(key, struct{}{})
+			m.locks[key] = struct{}{}
+			m.m.Unlock()
 			return true
 		}
 	}
@@ -34,7 +38,9 @@ func (m *Mutex) TryLock(key interface{}) (gotLock bool) {
 // Unlock unlocks for the key
 // please call Unlock only after having aquired the lock
 func (m *Mutex) Unlock(key interface{}) {
-	m.locks.Delete(key)
+	m.m.Lock()
+	delete(m.locks, key)
+	m.m.Unlock()
 }
 
 // borrowed from grpc
@@ -59,22 +65,22 @@ func (m *Mutex) backoff(retries int) time.Duration {
 
 // NewMapMutex returns a mapmutex with default configs
 func NewMapMutex() *Mutex {
-	var l sync.Map
 	return &Mutex{
-		locks:     l,
-		maxRetry:  100,
+		locks:     make(map[interface{}]interface{}),
+		m:         &sync.Mutex{},
+		maxRetry:  200,
 		maxDelay:  100000000, // 0.1 second
 		baseDelay: 10,        // 10 nanosecond
-		factor:    1.2,
-		jitter:    100,
+		factor:    1.1,
+		jitter:    0.2,
 	}
 }
 
 // NewCustomizedMapMutex returns a customized mapmutex
 func NewCustomizedMapMutex(mRetry int, mDelay, bDelay, factor, jitter float64) *Mutex {
-	var l sync.Map
 	return &Mutex{
-		locks:     l,
+		locks:     make(map[interface{}]interface{}),
+		m:         &sync.Mutex{},
 		maxRetry:  mRetry,
 		maxDelay:  mDelay,
 		baseDelay: bDelay,
